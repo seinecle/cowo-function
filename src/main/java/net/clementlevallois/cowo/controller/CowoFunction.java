@@ -4,10 +4,7 @@
  */
 package net.clementlevallois.cowo.controller;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.io.StringWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -15,12 +12,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import static java.util.stream.Collectors.toSet;
 import net.clementlevallois.stopwords.StopWordsRemover;
 import net.clementlevallois.stopwords.Stopwords;
 import net.clementlevallois.umigon.ngram.ops.NGramDuplicatesCleaner;
 import net.clementlevallois.utils.Multiset;
 import net.clementlevallois.utils.PerformCombinations;
+import org.gephi.graph.api.Column;
 import org.gephi.graph.api.Edge;
 import org.gephi.graph.api.Graph;
 import org.gephi.graph.api.GraphController;
@@ -45,7 +42,7 @@ public class CowoFunction {
         System.out.println("Hello World!");
     }
 
-    public String analyze(TreeMap<Integer, String> mapOfLines, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, int minCoocFreq, int minTermFreq) {
+    public String analyze(TreeMap<Integer, String> mapOfLines, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, int minCoocFreq, int minTermFreq, String typeCorrection) {
         try {
 
             /* EXTRACT NGRAMS */
@@ -97,8 +94,7 @@ public class CowoFunction {
             /* KEEP ONLY THE MOST FREQUENT WORDS (2000 most frequent is the default) */
             freqNGramsGlobal = freqNGramsGlobal.keepMostfrequent(freqNGramsGlobal, MOST_FREQUENT_TERMS);
 
-            
-             Set<String> ngramsInCurrentLine;
+            Set<String> ngramsInCurrentLine;
             Multiset<String> ngramsInCurrentLineMultiset = new Multiset();
             Set<String> setCoocForCurrentLine;
             Set<String> setCoocForCurrentLineCleaned;
@@ -111,8 +107,7 @@ public class CowoFunction {
 
 
             /* COUNTING NB OF LINES A SPECIFIC TERM APPEARS IN  */
-            /* needed for the TF IDF calculation  */
-
+ /* needed for the TF IDF calculation  */
             for (Integer lineNumber : mapOfLines.keySet()) {
 
                 String line = mapOfLines.get(lineNumber);
@@ -127,10 +122,10 @@ public class CowoFunction {
                         }
                     }
                 }
-            }            
-            
+            }
+
             /* COUNTING CO-OCCURRENCES  */
-             /* IT INCLUDES THE CALCLUS OF TF IDF FOR EACH EDGE  */
+ /* IT INCLUDES THE CALCLUS OF TF IDF FOR EACH EDGE  */
             for (Integer lineNumber : mapOfLines.keySet()) {
 
                 String line = mapOfLines.get(lineNumber);
@@ -150,7 +145,6 @@ public class CowoFunction {
                 }
 
                 // COOC CREATION FOR TERMS IN THE LINE
-                
                 // ALSO HANDLING TF IDF WEIGHTING
                 String arrayWords[] = new String[ngramsInCurrentLine.size()];
                 setCoocForCurrentLine = new HashSet();
@@ -169,9 +163,9 @@ public class CowoFunction {
                         Integer countLinesContainingTermA = countOfDocsContainingAGivenTerm.get(pair[0]);
                         Integer countLinesContainingTermB = countOfDocsContainingAGivenTerm.get(pair[1]);
 
-                        float tfidfTermA = countTermAInCurrLine / nbTermsInLine * (float) Math.log(nbLines /countLinesContainingTermA);
-                        float tfidfTermB = countTermBInCurrLine / nbTermsInLine * (float) Math.log(nbLines /countLinesContainingTermB);
-                        
+                        float tfidfTermA = countTermAInCurrLine / nbTermsInLine * (float) Math.log(nbLines / countLinesContainingTermA);
+                        float tfidfTermB = countTermBInCurrLine / nbTermsInLine * (float) Math.log(nbLines / countLinesContainingTermB);
+
                         float edgeWeightWithTFIDFForThisCoocForCurrLine = tfidfTermA + tfidfTermB;
 
                         Float weightTFIDFForThisCooc = tfidfForAnEdge.get(pairOcc);
@@ -205,8 +199,8 @@ public class CowoFunction {
 
             GraphModel gm = Lookup.getDefault().lookup(GraphController.class).getGraphModel(workspace);
 
-            gm.getNodeTable().addColumn("countTerms", Integer.TYPE);
-            gm.getEdgeTable().addColumn("countPairs", Integer.TYPE);
+            Column countTermsColumn = gm.getNodeTable().addColumn("countTerms", Integer.TYPE);
+            Column countPairsColumn = gm.getEdgeTable().addColumn("countPairs", Integer.TYPE);
             gm.getEdgeTable().addColumn("countPairsWithPMI", Float.TYPE);
             GraphFactory factory = gm.factory();
             Graph graphResult = gm.getGraph();
@@ -216,7 +210,7 @@ public class CowoFunction {
             for (Map.Entry<String, Integer> entry : freqNGramsGlobal.getInternalMap().entrySet()) {
                 node = factory.newNode(entry.getKey());
                 node.setLabel(entry.getKey());
-                node.setAttribute("countTerms", entry.getValue());
+                node.setAttribute(countTermsColumn, entry.getValue());
                 nodes.add(node);
             }
 
@@ -233,6 +227,7 @@ public class CowoFunction {
 //            Integer weightTargetOfEdgeMaxCooc = freqNGramsGlobal.getCount(pairEdgeMostOccurrences[1]);
             double maxValuePMI = 0.00001d;
             float maxValueTFIDF = 0.000001f;
+            float maxValueCountEdges = 0;
 
             Map<String, Double> edgesAndTheirPMIWeightsBeforeRescaling = new HashMap();
 
@@ -250,34 +245,55 @@ public class CowoFunction {
                 Integer countEdge = setCoocTotal.getCount(edgeToCreate);
                 Integer freqSource = freqNGramsGlobal.getCount(pair[0]);
                 Integer freqTarget = freqNGramsGlobal.getCount(pair[1]);
-                // THIS IS THE PMI STEP
+
+                // THIS IS RECODING THE HIGHEST PMI WEIGHTED EDGE
                 double edgeWeightPMI = (double) countEdge / (freqSource * freqTarget);
                 if (edgeWeightPMI > maxValuePMI) {
                     maxValuePMI = edgeWeightPMI;
                 }
                 edgesAndTheirPMIWeightsBeforeRescaling.put(edgeToCreate, edgeWeightPMI);
-                
+
                 // THIS IS RECORDING THE HIGHEST TFIDF WEIGHTED EDGE
                 Float tfidfForThisEdge = tfidfForAnEdge.get(edgeToCreate);
-                if (tfidfForThisEdge > maxValueTFIDF){
+                if (tfidfForThisEdge > maxValueTFIDF) {
                     maxValueTFIDF = tfidfForThisEdge;
                 }
+
+                // THIS IS RECORDING THE HIGHEST EDGE COUNT
+                if (countEdge > maxValueCountEdges) {
+                    maxValueCountEdges = countEdge;
+                }
             }
-
-
 
             /* RESCALING EDGE WEIGHTS FROM 0 TO 10  */
             for (String edgeToCreate : setCoocTotal.getElementSet()) {
                 String[] pair = edgeToCreate.split(",");
                 Integer countEdge = setCoocTotal.getCount(edgeToCreate);
-//                double edgeWeightBeforeRescaling = edgesAndTheirPMIWeightsBeforeRescaling.get(edgeToCreate);
-                double edgeWeightBeforeRescaling = tfidfForAnEdge.get(edgeToCreate);
-//                double edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValuePMI;
-                double edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueTFIDF;
+                double edgeWeightRescaledToTen = 0;
+
+                switch (typeCorrection) {
+                    case "pmi" -> {
+                            double edgeWeightBeforeRescaling = edgesAndTheirPMIWeightsBeforeRescaling.get(edgeToCreate);
+                            edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValuePMI;
+                        }
+                    case "tfidf" -> {
+                            double edgeWeightBeforeRescaling = tfidfForAnEdge.get(edgeToCreate);
+                            edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueTFIDF;
+                        }
+                    case "none"  ->  {
+                            double edgeWeightBeforeRescaling = countEdge.doubleValue();
+                            edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueCountEdges;
+                        }
+                    default -> {
+                            double edgeWeightBeforeRescaling = countEdge.doubleValue();
+                            edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueCountEdges;
+                    }
+                }
+                
                 Node nodeSource = graphResult.getNode(pair[0]);
                 Node nodeTarget = graphResult.getNode(pair[1]);
                 Edge edge = factory.newEdge(nodeSource, nodeTarget, 0, edgeWeightRescaledToTen, false);
-                edge.setAttribute("countPairs", countEdge);
+                edge.setAttribute(countPairsColumn, countEdge);
 
                 edgesForGraph.add(edge);
             }

@@ -2,7 +2,7 @@
 
 Turn your texts into networks.
 
-# A replacement for the older cowo verion
+# A replacement for the older cowo version
 
 This the new version of a project (also named cowo) which I had developed in the early 2010s.
 
