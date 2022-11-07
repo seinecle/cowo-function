@@ -300,9 +300,7 @@ public class CowoFunction {
 
             graphResult.addAllEdges(edgesForGraph);
 
-//        System.out.println("graph contains " + graphResult.getNodeCount() + " nodes");
-//        System.out.println("graph contains " + graphResult.getEdgeCount() + " edges");
-//removing nodes (terms) that have zero connection
+            //removing nodes (terms) that have zero connection
             Iterator<Node> iterator = graphResult.getNodes().toCollection().iterator();
             Set<Node> nodesToRemove = new HashSet();
 
