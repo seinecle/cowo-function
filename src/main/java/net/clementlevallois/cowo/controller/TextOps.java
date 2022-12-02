@@ -15,13 +15,13 @@ import net.clementlevallois.utils.Multiset;
  */
 public class TextOps {
 
-    public Multiset<String> extractNGramsFromMapOfLines(Map<Integer, String> mapOfLines) {
+    public Multiset<String> extractNGramsFromMapOfLines(Map<Integer, String> mapOfLines, int maxNGram) {
         NGramFinder ngf;
         Multiset<String> freqNGramsGlobal = new Multiset();
         for (Integer i : mapOfLines.keySet()) {
             String line = mapOfLines.get(i);
             ngf = new NGramFinder(line);
-            Map<String, Integer> runIt = ngf.runIt(4, false);
+            Map<String, Integer> runIt = ngf.runIt(maxNGram, false);
             freqNGramsGlobal.addAllFromMap(runIt);
         }
         return freqNGramsGlobal;

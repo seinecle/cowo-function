@@ -42,12 +42,12 @@ public class CowoFunction {
         System.out.println("Hello World!");
     }
 
-    public String analyze(TreeMap<Integer, String> mapOfLines, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, int minCoocFreq, int minTermFreq, String typeCorrection) {
+    public String analyze(TreeMap<Integer, String> mapOfLines, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, int minCoocFreq, int minTermFreq, String typeCorrection, int maxNGram) {
         try {
 
             /* EXTRACT NGRAMS */
             TextOps textOps = new TextOps();
-            Multiset<String> freqNGramsGlobal = textOps.extractNGramsFromMapOfLines(mapOfLines);
+            Multiset<String> freqNGramsGlobal = textOps.extractNGramsFromMapOfLines(mapOfLines, maxNGram);
 
             Set<String> stopwords = Stopwords.getStopWords(selectedLanguage).get("long");
             NGramDuplicatesCleaner cleaner = new NGramDuplicatesCleaner(stopwords);
