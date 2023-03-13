@@ -173,7 +173,7 @@ public class CowoFunction {
             }
             /* LEMMATIZATION */
             Map<String, String> cleanAndStrippedToLemmatizedForm = new HashMap();
-            Map<Integer, String> mapInput = new HashMap();
+            TreeMap<Integer, String> mapInput = new TreeMap();
             Set<String> candidatesToLemmatization = new HashSet();
             for (NGram ngram : listOfnGramsGlobal) {
                 candidatesToLemmatization.add(ngram.getCleanedAndStrippedNgram());
@@ -187,6 +187,7 @@ public class CowoFunction {
             oos.writeObject(mapInput);
             oos.flush();
             byte[] data = bos.toByteArray();
+
             if (selectedLanguage.equals("en") | selectedLanguage.equals("fr")) {
 
                 HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.ofByteArray(data);
@@ -220,7 +221,7 @@ public class CowoFunction {
                 try {
                     HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.ofByteArray(data);
 
-                    URI uri = new URI("http://localhost:7000/lemmatize/multiset/ngrams/" + selectedLanguage);
+                    URI uri = new URI("http://localhost:7000/lemmatize/map/" + selectedLanguage);
 
                     request = HttpRequest.newBuilder()
                             .uri(uri)
