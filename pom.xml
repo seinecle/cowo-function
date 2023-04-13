@@ -22,12 +22,14 @@
         <dependency>
             <groupId>net.clementlevallois.functions</groupId>
             <artifactId>umigon-ngram-ops</artifactId>
-            <version>1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.clementlevallois.functions</groupId>
+            <artifactId>umigon-tokenizer</artifactId>
         </dependency>
         <dependency>
             <groupId>net.clementlevallois.functions</groupId>
             <artifactId>umigon-stopwords</artifactId>
-            <version>1.0</version>
         </dependency>
         <dependency>
             <groupId>org.gephi</groupId>
