@@ -18,15 +18,12 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import net.clementlevallois.stopwords.StopWordsRemover;
@@ -83,13 +80,13 @@ public class CowoFunction {
         int minCharNumber = 3;
         boolean replaceStopwords = false;
         boolean scientific = true;
-        int minCooC = 2;
-        int minTermFreq = 5;
+        int minTermFreq = 3;
+        int minCooCFreq = 2;
         String correction = "pmi";
         int maxNGram = 4;
         boolean lemmatize = true;
-        String analyze = cowo.analyze(mapOfLines, lang, new HashSet(), minCharNumber, replaceStopwords, scientific, minCooC, minTermFreq, correction, maxNGram, lemmatize);
-        Files.writeString(Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\cowo-tst.gexf"), analyze);
+        String analyze = cowo.analyze(mapOfLines, lang, new HashSet(), minCharNumber, replaceStopwords, scientific, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
+        Files.writeString(Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\cowo-tst-3.gexf"), analyze);
     }
 
     public void setFlattenToAScii(boolean flattenToAScii) {
@@ -192,6 +189,9 @@ public class CowoFunction {
             clock.closeAndPrintClock();
 
             final int minOcc;
+
+            /* REMOVE INFREQUENT NGRAMS IN A PREEMPTIVE WAY FOR VERY LARGE NETWORKS */
+
 
             if (multisetOfNGramsSoFarStringified.getSize() < 10_000) {
                 minOcc = Math.min(1, minTermFreq);
@@ -337,8 +337,12 @@ public class CowoFunction {
 
             dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
                     .parallelStream()
-                    .filter(ngram -> !stopWordsRemover.shouldItBeRemoved(ngram.getOriginalFormLemmatized()))
-                    .collect(Collectors.toList()));
+                    .filter(ngram -> {
+                        boolean resultStop = !stopWordsRemover.shouldItBeRemoved(ngram.getOriginalFormLemmatized());
+                        return resultStop;
+                    })
+                    .collect(Collectors.toList())
+            );
 
             clock.closeAndPrintClock();
 
@@ -352,92 +356,103 @@ public class CowoFunction {
 
             clock.closeAndPrintClock();
 
-            /* KEEP ONLY THE 2,000 MOST FREQUENT NGRAMS */
-            clock = new Clock("keep only the most frequent terms", silentClock);
-            Map<String, Long> countNGramsLemmatized = dm.getListOfnGramsGlobal().stream()
-                    .map(NGram::getOriginalFormLemmatized)
+            /*
+            DEDUPLICATING NGRAMS BECAUSE OF LEMMA / NON LEMMA VERSIONS
+            COUNTING THEM IN A MAP
+            REMOVING THOSE THAT APPEAR LESS THAN minTermFreq
+            KEEPING ONLY THE N MOST FREQUENT
+             */
+            clock = new Clock("counting ngrams, merging the lemmatized and non lemmatized versions, keeping only the top terms", silentClock);
+            Map<NGram, Long> nGramsAndTheirCounts = dm.getListOfnGramsGlobal().stream()
                     .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
 
-            Set<String> topNames = countNGramsLemmatized.entrySet().stream()
+            Function<NGram, String> keyExtractor = NGram::getOriginalFormLemmatized;
+
+            Map<String, Long> mergedMap = nGramsAndTheirCounts.entrySet().parallelStream()
+                    .collect(Collectors.groupingBy(
+                            entry -> keyExtractor.apply(entry.getKey()),
+                            Collectors.summingLong(Map.Entry::getValue)
+                    ));
+
+            Map<NGram, Long> deduplicatedMap = mergedMap.entrySet().parallelStream()
+                    .collect(Collectors.toMap(
+                            entry -> nGramsAndTheirCounts.keySet().parallelStream()
+                                    .filter(ngram -> keyExtractor.apply(ngram).equals(entry.getKey()))
+                                    .findFirst().orElse(null),
+                            Map.Entry::getValue
+                    ));
+
+            Map<NGram, Long> topEntries = deduplicatedMap.entrySet()
+                    .parallelStream()
+                    .filter(entry -> entry.getValue() >= minTermFreq)
                     .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
                     .limit(MOST_FREQUENT_TERMS)
-                    .map(Map.Entry::getKey)
-                    .collect(Collectors.toSet());
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-            dm.setnGramsAndGlobalCount(dm.getListOfnGramsGlobal().stream()
-                    .filter(ngram -> topNames.contains(ngram.getOriginalFormLemmatized()))
-                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting())));
+            dm.setnGramsAndGlobalCount(topEntries);
+
             clock.closeAndPrintClock();
-
-            dm.getnGramsAndGlobalCount().entrySet().removeIf(entry -> entry.getValue() < minTermFreq);
-
-            List<Cooc> listCoocForCurrentLine;
-            List<Cooc> listCoocForCurrentLineCleaned;
-            Multiset<Cooc> listCoocTotal = new Multiset();
-
 
             /* COUNTING CO-OCCURRENCES  */
             clock = new Clock("calculating cooccurrences", silentClock);
+            Multiset<Cooc> listCoocTotal = new Multiset();
 
-            for (Integer lineNumber : dm.getCleanedAndStrippedNGramsPerLine().keySet()) {
+            dm.getCleanedAndStrippedNGramsPerLine().entrySet().parallelStream().forEach(entry -> {
 
-                Set<String> cleanedAndStrippedStringifiedNGramsForOneLine = dm.getCleanedAndStrippedNGramsPerLine().get(lineNumber);
-                Queue<NGram> ngramsInCurrentLine = new ConcurrentLinkedQueue();
-
+                Set<String> cleanedAndStrippedStringifiedNGramsForOneLine = entry.getValue();
+                /*
+                the use of a concurrent hashmap is to make sure we retrieve all different ngrams in a given line
+                using their lemmatized form as a key in the map helps ensure unicity
+                 */
+                ConcurrentHashMap<String, NGram> ngramsInCurrentLine = new ConcurrentHashMap();
                 dm.getnGramsAndGlobalCount().keySet().parallelStream()
                         .forEach(ngram -> {
-                            if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii))) {
-                                ngramsInCurrentLine.add(ngram);
+                            String cleanedAndStrippedNgram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
+                            if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(cleanedAndStrippedNgram)) {
+                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
                             } else if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(ngram.getOriginalFormLemmatized())) {
-                                ngramsInCurrentLine.add(ngram);
+                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
                             }
                         });
 
-                if (ngramsInCurrentLine.size() < 2) {
-                    continue;
-                }
+                if (ngramsInCurrentLine.size() > 1) {
 
-                // COOC CREATION FOR TERMS IN THE LINE
-                // ALSO HANDLING A WEIRD TF IDF WEIGHTING FOR THE EDGES
-                NGram arrayNGram[] = new NGram[ngramsInCurrentLine.size()];
-                listCoocForCurrentLine = new ArrayList();
-                listCoocForCurrentLineCleaned = new ArrayList();
-                List<Cooc> coocs = new PerformCombinationsOnNGrams(ngramsInCurrentLine.toArray(arrayNGram)).call();
-                listCoocForCurrentLine.addAll(coocs);
-                for (Cooc cooc : listCoocForCurrentLine) {
-                    if (cooc.getA() != null && cooc.getB() != null
-                            && !cooc.getA().getOriginalFormLemmatized().equals(cooc.getB().getOriginalFormLemmatized())
-                            && !cooc.getA().getOriginalFormLemmatized().contains(cooc.getB().getOriginalFormLemmatized())
-                            && !cooc.getB().getOriginalFormLemmatized().contains(cooc.getA().getOriginalFormLemmatized())) {
-
-                        listCoocForCurrentLineCleaned.add(cooc);
+                    // COOC CREATION FOR TERMS IN THE LINE
+                    NGram arrayNGram[] = new NGram[ngramsInCurrentLine.size()];
+                    List<Cooc> coocs;
+                    try {
+                        coocs = new PerformCombinationsOnNGrams(ngramsInCurrentLine.values().toArray(arrayNGram)).call();
+                        listCoocTotal.addAllFromListOrSet(coocs);
+                    } catch (InterruptedException | IOException ex) {
+                        Exceptions.printStackTrace(ex);
                     }
                 }
-
-                listCoocTotal.addAllFromListOrSet(listCoocForCurrentLineCleaned);
-            }
+            });
             clock.closeAndPrintClock();
 
             /* REMOVING UNFREQUENT COOC  */
             clock = new Clock("removing infrequent cooc", silentClock);
-            if (listCoocTotal.getSize() < 50_000) {
+            Integer nbCoocs = listCoocTotal.getSize();
+            if (nbCoocs < 50_000) {
                 minCoocFreq = 2;
-            } else if (listCoocTotal.getSize() < 80_000) {
+            } else if (nbCoocs < 80_000) {
                 minCoocFreq = 3;
-            } else if (listCoocTotal.getSize() < 110_000) {
+            } else if (nbCoocs < 110_000) {
                 minCoocFreq = 4;
             } else {
                 minCoocFreq = 5;
             }
-            List<Map.Entry<Cooc, Integer>> sortDesckeepAboveMinFreq = listCoocTotal.sortDesckeepAboveMinFreq(listCoocTotal, minOcc);
+            List<Map.Entry<Cooc, Integer>> sortDesckeepAboveMinFreq = listCoocTotal.sortDesckeepAboveMinFreq(listCoocTotal, minCoocFreq);
 
             Multiset<String> coocsStringified = new Multiset();
+            Set<String> nodesInEdgesStringified = new HashSet();
             Multiset<Cooc> coocs = new Multiset();
             for (Map.Entry<Cooc, Integer> entry : sortDesckeepAboveMinFreq) {
                 coocsStringified.addOne(entry.getKey().toString());
-                coocs.addSeveral(entry.getKey(),entry.getValue());
+                coocs.addSeveral(entry.getKey(), entry.getValue());
+                nodesInEdgesStringified.add(entry.getKey().a.getOriginalFormLemmatized());
+                nodesInEdgesStringified.add(entry.getKey().b.getOriginalFormLemmatized());
             }
-
 
             clock.closeAndPrintClock();
 
@@ -466,12 +481,18 @@ public class CowoFunction {
             Node node;
             for (Map.Entry<NGram, Long> entry : dm.getnGramsAndGlobalCount().entrySet()) {
                 NGram ngram = entry.getKey();
+
+                // NOT INCLUDING ISOLATED NODES IN FINAL GRAPH
+                if (!nodesInEdgesStringified.contains(ngram.getOriginalFormLemmatized())) {
+                    continue;
+                }
                 Integer count = entry.getValue().intValue();
                 if (count < minTermFreq) {
                     System.out.println("error with term " + ngram.getCleanedAndStrippedNgram());
                     System.out.println("freq " + count);
                 }
                 node = factory.newNode(ngram.getOriginalFormLemmatized());
+
                 node.setLabel(ngram.getOriginalFormLemmatized());
                 node.setAttribute(countTermsColumn, count);
                 nodes.add(node);
@@ -563,7 +584,7 @@ public class CowoFunction {
             clock.closeAndPrintClock();
             globalClock.closeAndPrintClock();
             return resultGexf;
-        } catch (URISyntaxException | InterruptedException | IOException ex) {
+        } catch (URISyntaxException | IOException ex) {
             Exceptions.printStackTrace(ex);
         } finally {
             try {
@@ -575,7 +596,9 @@ public class CowoFunction {
             }
         }
 
-        System.out.println("error in cowo function");
+        System.out.println(
+                "error in cowo function");
+
         return "error in cowo function";
 
     }
