@@ -63,11 +63,13 @@ public class CowoFunction {
     private boolean flattenToAScii = false;
     private Clock clock;
     private static boolean silentClock = true;
+    private static boolean skipContentInParentheses = false;
+    private static boolean removeLeaves = false;
 
     public static void main(String[] args) throws IOException {
         CowoFunction cowo = new CowoFunction();
-//        Path path = Path.of("G:\\Mon Drive\\Writing\\Article Umigon FR\\Article for RAM\\bibliometric analysis\\joint zotero plus wos\\20230412 - results - 1.txt");
-        Path path = Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\March 2021 tweet text_ March 21.txt");
+        Path path = Path.of("G:\\Mon Drive\\Writing\\Article Umigon FR\\Article for RAM\\bibliometric analysis\\joint zotero plus wos\\20230420 - results - 1.txt");
+//        Path path = Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\March 2021 tweet text_ March 21.txt");
         List<String> readAllLines = Files.readAllLines(path, StandardCharsets.ISO_8859_1);
         TreeMap<Integer, String> mapOfLines = new TreeMap();
         int i = 0;
@@ -80,13 +82,16 @@ public class CowoFunction {
         int minCharNumber = 3;
         boolean replaceStopwords = false;
         boolean scientific = true;
-        int minTermFreq = 3;
+        removeLeaves = true;
+        int minTermFreq = 4;
+        Set<String> userSuppliedStopwords = Set.of("consumer", "consumers", "textual", "marketing");
         int minCooCFreq = 2;
         String correction = "pmi";
+        skipContentInParentheses = false;
         int maxNGram = 4;
         boolean lemmatize = true;
-        String analyze = cowo.analyze(mapOfLines, lang, new HashSet(), minCharNumber, replaceStopwords, scientific, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
-        Files.writeString(Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\cowo-tst-3.gexf"), analyze);
+        String analyze = cowo.analyze(mapOfLines, lang, userSuppliedStopwords, minCharNumber, replaceStopwords, scientific, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
+        Files.writeString(Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\cowo--min-occ-4-words-removed.gexf"), analyze);
     }
 
     public void setFlattenToAScii(boolean flattenToAScii) {
@@ -113,10 +118,24 @@ public class CowoFunction {
                         List<TextFragment> tokenized = null;
                         try {
                             tokenized = UmigonTokenizer.tokenize(entry.getValue().toLowerCase(), new HashSet());
+                            if (skipContentInParentheses && tokenized.size() >= 2) {
+                                TextFragment first = tokenized.get(0);
+                                TextFragment last = tokenized.get(tokenized.size() - 1);
+                                if (!(first.getOriginalForm().equals("(") && last.getOriginalForm().equals(")"))) {
+                                    dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
+                                } else {
+                                    String s = tokenized.stream().map(e -> e.toString()).reduce("", String::concat);
+                                    if (!s.chars().anyMatch(X -> Character.isLowerCase(X))) {
+                                        dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
+                                    }
+                                }
+                            } else {
+                                dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
+                            }
+
                         } catch (IOException ex) {
                             Exceptions.printStackTrace(ex);
                         }
-                        dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
                     });
 
             clock.closeAndPrintClock();
@@ -143,6 +162,9 @@ public class CowoFunction {
                     // using the property that when we add an element to a set, it returns true only if the element was not already present.
                     // convenient to test uniqueness
                     String stringfiedNGram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
+                    if (stringfiedNGram.equals("berger")) {
+                        System.out.println("stop");
+                    }
                     if (nGramsForUniquenessTest.add(stringfiedNGram)) {
                         dm.getListOfnGramsGlobal().add(ngram);
                         stringifiedNGrams.add(stringfiedNGram);
@@ -191,8 +213,6 @@ public class CowoFunction {
             final int minOcc;
 
             /* REMOVE INFREQUENT NGRAMS IN A PREEMPTIVE WAY FOR VERY LARGE NETWORKS */
-
-
             if (multisetOfNGramsSoFarStringified.getSize() < 10_000) {
                 minOcc = Math.min(1, minTermFreq);
             } else if (multisetOfNGramsSoFarStringified.getSize() < 20_000) {
@@ -275,6 +295,7 @@ public class CowoFunction {
                             }
                         } else {
                             System.out.println("lemmatization lightweight maps returned by the API was not a 200 code");
+                            mapResultLemmatization = new HashMap();
                         }
                     }
                     );
@@ -305,6 +326,7 @@ public class CowoFunction {
                             }
                         } else {
                             System.out.println("lemmatization heavyweight multiset ngrams returned by the API was not a 200 code");
+                            mapResultLemmatization = new HashMap();
                         }
 
                     } catch (URISyntaxException | IOException | InterruptedException ex) {
@@ -317,8 +339,12 @@ public class CowoFunction {
 
                 for (Integer key : mapInputCleanedAndStripped.keySet()) {
                     String input = mapInputCleanedAndStripped.get(key);
-                    String output = mapResultLemmatization.get(key);
-                    dm.getStringifiedCleanedAndStrippedNGramToLemmatizedForm().put(input, output);
+                    if (mapResultLemmatization.containsKey(key)) {
+                        String output = mapResultLemmatization.get(key);
+                        dm.getStringifiedCleanedAndStrippedNGramToLemmatizedForm().put(input, output);
+                    } else {
+                        dm.getStringifiedCleanedAndStrippedNGramToLemmatizedForm().put(input, input);
+                    }
                 }
                 for (NGram ngram : dm.getListOfnGramsGlobal()) {
                     String stringifiedNgram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
@@ -330,7 +356,7 @@ public class CowoFunction {
 
             /* stopwords removal - 2nd run on the lemmatized form this time
             
-            the reason for this second run is that the lemmarization step has modified terms,
+            the reason for this second run is that the lemmatization step has modified terms,
             
             hence creating new forms that might well be in the list of stopwords */
             clock = new Clock("second round of stopwords removal", silentClock);
@@ -338,8 +364,11 @@ public class CowoFunction {
             dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
                     .parallelStream()
                     .filter(ngram -> {
-                        boolean resultStop = !stopWordsRemover.shouldItBeRemoved(ngram.getOriginalFormLemmatized());
-                        return resultStop;
+//                        if (ngram.getOriginalFormLemmatized().equals("relationship")){
+//                            System.out.println("stop");
+//                        }
+                        boolean keepIt = !stopWordsRemover.shouldItBeRemoved(ngram.getOriginalFormLemmatized());
+                        return keepIt;
                     })
                     .collect(Collectors.toList())
             );
@@ -384,7 +413,10 @@ public class CowoFunction {
 
             Map<NGram, Long> topEntries = deduplicatedMap.entrySet()
                     .parallelStream()
-                    .filter(entry -> entry.getValue() >= minTermFreq)
+                    .filter(entry -> {
+                        boolean keepIt = entry.getValue() >= minTermFreq;
+                        return keepIt;
+                    })
                     .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
                     .limit(MOST_FREQUENT_TERMS)
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
@@ -434,24 +466,24 @@ public class CowoFunction {
             clock = new Clock("removing infrequent cooc", silentClock);
             Integer nbCoocs = listCoocTotal.getSize();
             if (nbCoocs < 50_000) {
-                minCoocFreq = 2;
+                minCoocFreq = 1;
             } else if (nbCoocs < 80_000) {
-                minCoocFreq = 3;
+                minCoocFreq = 2;
             } else if (nbCoocs < 110_000) {
-                minCoocFreq = 4;
+                minCoocFreq = 3;
             } else {
-                minCoocFreq = 5;
+                minCoocFreq = 4;
             }
             List<Map.Entry<Cooc, Integer>> sortDesckeepAboveMinFreq = listCoocTotal.sortDesckeepAboveMinFreq(listCoocTotal, minCoocFreq);
 
             Multiset<String> coocsStringified = new Multiset();
-            Set<String> nodesInEdgesStringified = new HashSet();
+            Multiset<String> nodesInEdgesStringified = new Multiset();
             Multiset<Cooc> coocs = new Multiset();
             for (Map.Entry<Cooc, Integer> entry : sortDesckeepAboveMinFreq) {
-                coocsStringified.addOne(entry.getKey().toString());
+                coocsStringified.addSeveral(entry.getKey().toString(), entry.getValue());
                 coocs.addSeveral(entry.getKey(), entry.getValue());
-                nodesInEdgesStringified.add(entry.getKey().a.getOriginalFormLemmatized());
-                nodesInEdgesStringified.add(entry.getKey().b.getOriginalFormLemmatized());
+                nodesInEdgesStringified.addOne(entry.getKey().a.getOriginalFormLemmatized());
+                nodesInEdgesStringified.addOne(entry.getKey().b.getOriginalFormLemmatized());
             }
 
             clock.closeAndPrintClock();
@@ -474,26 +506,39 @@ public class CowoFunction {
             GraphModel gm = Lookup.getDefault().lookup(GraphController.class).getGraphModel(workspace);
             Column countTermsColumn = gm.getNodeTable().addColumn("countTerms", Integer.TYPE);
             Column countPairsColumn = gm.getEdgeTable().addColumn("countPairs", Integer.TYPE);
-            gm.getEdgeTable().addColumn("countPairsWithPMI", Float.TYPE);
+            if (typeCorrection.equals("pmi")) {
+                gm.getEdgeTable().addColumn("pmi", Float.TYPE);
+            }
             GraphFactory factory = gm.factory();
             Graph graphResult = gm.getGraph();
             Set<Node> nodes = new HashSet();
             Node node;
+            Set<String> elementSet = nodesInEdgesStringified.getElementSet();
+            Set<String> removedNodes = new HashSet();
+
             for (Map.Entry<NGram, Long> entry : dm.getnGramsAndGlobalCount().entrySet()) {
                 NGram ngram = entry.getKey();
+                String nodeLabel = ngram.getOriginalFormLemmatized();
 
                 // NOT INCLUDING ISOLATED NODES IN FINAL GRAPH
-                if (!nodesInEdgesStringified.contains(ngram.getOriginalFormLemmatized())) {
+                if (!elementSet.contains(nodeLabel)) {
+                    removedNodes.add(nodeLabel);
                     continue;
                 }
+
+                if (removeLeaves && nodesInEdgesStringified.getCount(nodeLabel) == 1) {
+                    removedNodes.add(nodeLabel);
+                    continue;
+                }
+
                 Integer count = entry.getValue().intValue();
                 if (count < minTermFreq) {
-                    System.out.println("error with term " + ngram.getCleanedAndStrippedNgram());
+                    System.out.println("error with term " + nodeLabel);
                     System.out.println("freq " + count);
                 }
-                node = factory.newNode(ngram.getOriginalFormLemmatized());
+                node = factory.newNode(nodeLabel);
 
-                node.setLabel(ngram.getOriginalFormLemmatized());
+                node.setLabel(nodeLabel);
                 node.setAttribute(countTermsColumn, count);
                 nodes.add(node);
             }
@@ -513,10 +558,12 @@ public class CowoFunction {
 
             Looping through all cooc to compute their PMI
             Also recording the highest PMI value for the rescaling of weights, later, from 0 to 10.
-            Also recording the highest TF IDF value for the rescaling of weights, later, from 0 to 10.
 
              */
             for (Cooc cooc : coocs.getElementSet()) {
+                if (removedNodes.contains(cooc.a.getOriginalFormLemmatized()) || removedNodes.contains(cooc.b.getOriginalFormLemmatized())) {
+                    continue;
+                }
                 Integer countEdge = coocsStringified.getCount(cooc.toString());
                 Integer freqSource = dm.getnGramsAndGlobalCount().get(cooc.a).intValue();
                 Integer freqTarget = dm.getnGramsAndGlobalCount().get(cooc.b).intValue();
@@ -534,31 +581,37 @@ public class CowoFunction {
                     maxValueCountEdges = countEdge;
                 }
             }
-            /* RESCALING EDGE WEIGHTS FROM 0 TO 10  */
+            /* RESCALING EDGE WEIGHTS FROM 0 TO 10  AND ADDING THE EDGES TO THE GRAPH */
             for (Cooc cooc : coocs.getElementSet()) {
+                if (removedNodes.contains(cooc.a.getOriginalFormLemmatized()) || removedNodes.contains(cooc.b.getOriginalFormLemmatized())) {
+                    continue;
+                }
                 Integer countEdge = coocsStringified.getCount(cooc.toString());
 
-                double edgeWeightRescaledToTen = 0;
-
+                double edgeWeightRescaledToTen;
+                double edgeWeightBeforeRescaling = 0;
                 switch (typeCorrection) {
-                    case "pmi" -> {
-                        double edgeWeightBeforeRescaling = edgesAndTheirPMIWeightsBeforeRescaling.get(cooc.toString());
+                    case "pmi":
+                        edgeWeightBeforeRescaling = edgesAndTheirPMIWeightsBeforeRescaling.get(cooc.toString());
                         edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValuePMI;
-                    }
-                    case "none" -> {
-                        double edgeWeightBeforeRescaling = countEdge.doubleValue();
+                        break;
+                    case "none":
+                        edgeWeightBeforeRescaling = countEdge.doubleValue();
                         edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueCountEdges;
-                    }
-                    default -> {
-                        double edgeWeightBeforeRescaling = countEdge.doubleValue();
+                        break;
+                    default:
+                        edgeWeightBeforeRescaling = countEdge.doubleValue();
                         edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueCountEdges;
-                    }
                 }
 
                 Node nodeSource = nodesMap.get(cooc.a.getOriginalFormLemmatized());
                 Node nodeTarget = nodesMap.get(cooc.b.getOriginalFormLemmatized());
                 Edge edge = factory.newEdge(nodeSource, nodeTarget, 0, edgeWeightRescaledToTen, false);
                 edge.setAttribute(countPairsColumn, countEdge);
+                if (typeCorrection.equals("pmi")) {
+                    float edgeWeightBeforeRescalingFloat = (float)edgeWeightBeforeRescaling;
+                    edge.setAttribute("pmi", edgeWeightBeforeRescalingFloat);
+                }
                 edgesForGraph.add(edge);
             }
             graphResult.addAllEdges(edgesForGraph);
@@ -568,14 +621,10 @@ public class CowoFunction {
             ExportController ec = Lookup.getDefault().lookup(ExportController.class);
             ExporterGEXF exporterGexf = (ExporterGEXF) ec.getExporter("gexf");
             exporterGexf.setWorkspace(workspace);
-            exporterGexf.setExportDynamic(
-                    false);
-            exporterGexf.setExportPosition(
-                    false);
-            exporterGexf.setExportSize(
-                    false);
-            exporterGexf.setExportColors(
-                    false);
+            exporterGexf.setExportDynamic(false);
+            exporterGexf.setExportPosition(false);
+            exporterGexf.setExportSize(false);
+            exporterGexf.setExportColors(false);
             exporterGexf.setExportMeta(true);
             StringWriter stringWriter = new StringWriter();
             ec.exportWriter(stringWriter, exporterGexf);
@@ -595,10 +644,7 @@ public class CowoFunction {
                 Exceptions.printStackTrace(ex);
             }
         }
-
-        System.out.println(
-                "error in cowo function");
-
+        System.out.println("error in cowo function");
         return "error in cowo function";
 
     }
