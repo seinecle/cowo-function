@@ -68,8 +68,7 @@ public class CowoFunction {
 
     public static void main(String[] args) throws IOException {
         CowoFunction cowo = new CowoFunction();
-        Path path = Path.of("G:\\Mon Drive\\Writing\\Article Umigon FR\\Article for RAM\\bibliometric analysis\\joint zotero plus wos\\20230420 - results - 1.txt");
-//        Path path = Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\March 2021 tweet text_ March 21.txt");
+        Path path = Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\user provided\\Attachments-Re Error trying to process 50Mb corpus\\corpus_limpo_infopasto_anotado_semcomentarios.txt");
         List<String> readAllLines = Files.readAllLines(path, StandardCharsets.ISO_8859_1);
         TreeMap<Integer, String> mapOfLines = new TreeMap();
         int i = 0;
@@ -78,7 +77,7 @@ public class CowoFunction {
         }
         silentClock = false;
         cowo.setFlattenToAScii(false);
-        String lang = "en";
+        String lang = "pt";
         int minCharNumber = 3;
         boolean replaceStopwords = false;
         boolean scientific = true;
@@ -162,9 +161,6 @@ public class CowoFunction {
                     // using the property that when we add an element to a set, it returns true only if the element was not already present.
                     // convenient to test uniqueness
                     String stringfiedNGram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
-                    if (stringfiedNGram.equals("berger")) {
-                        System.out.println("stop");
-                    }
                     if (nGramsForUniquenessTest.add(stringfiedNGram)) {
                         dm.getListOfnGramsGlobal().add(ngram);
                         stringifiedNGrams.add(stringfiedNGram);
@@ -199,7 +195,6 @@ public class CowoFunction {
             stopWordsRemover.addStopWordsToKeep(new HashSet());
             clock.closeAndPrintClock();
 
-            /* REMOVE NGRAMS THAT OVERLAP WITH OTHERS WHILE BEING INFREQUENT */
             clock = new Clock("creating a multiset to remove redundant ngrams", silentClock);
 
             Multiset<String> multisetOfNGramsSoFarStringified = new Multiset();
@@ -210,6 +205,7 @@ public class CowoFunction {
 
             clock.closeAndPrintClock();
 
+            /* REMOVE NGRAMS THAT OVERLAP WITH OTHERS WHILE BEING INFREQUENT */
             final int minOcc;
 
             /* REMOVE INFREQUENT NGRAMS IN A PREEMPTIVE WAY FOR VERY LARGE NETWORKS */
@@ -232,10 +228,11 @@ public class CowoFunction {
             Map<String, Integer> goodSetWithoutDuplicates = cleaner.removeDuplicates(multisetOfNGramsSoFarStringified.getInternalMap(), maxNGram, true);
 
             Set<String> stringsToKeep = goodSetWithoutDuplicates.keySet();
-            dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
+            List<NGram> nGramsToKeep = dm.getListOfnGramsGlobal()
                     .parallelStream()
                     .filter(ngram -> stringsToKeep.contains(ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii)))
-                    .collect(Collectors.toList()));
+                    .collect(Collectors.toList());
+            dm.setListOfnGramsGlobal(nGramsToKeep);
 
             clock.closeAndPrintClock();
 
@@ -273,7 +270,7 @@ public class CowoFunction {
                 oos.flush();
                 byte[] data = bos.toByteArray();
 
-                if (selectedLanguage.equals("en") | selectedLanguage.equals("fr")) {
+                if (selectedLanguage.equals("en") | selectedLanguage.equals("fr") | selectedLanguage.equals("es")) {
 
                     HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.ofByteArray(data);
 
@@ -330,7 +327,8 @@ public class CowoFunction {
                         }
 
                     } catch (URISyntaxException | IOException | InterruptedException ex) {
-                        System.out.println("ex:" + ex.getMessage());
+                        System.out.println("heavyweight lemmatizer was offline");
+                        mapResultLemmatization = new HashMap();
                     }
                 }
                 clock.closeAndPrintClock();
@@ -364,9 +362,6 @@ public class CowoFunction {
             dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
                     .parallelStream()
                     .filter(ngram -> {
-//                        if (ngram.getOriginalFormLemmatized().equals("relationship")){
-//                            System.out.println("stop");
-//                        }
                         boolean keepIt = !stopWordsRemover.shouldItBeRemoved(ngram.getOriginalFormLemmatized());
                         return keepIt;
                     })
@@ -488,6 +483,25 @@ public class CowoFunction {
 
             clock.closeAndPrintClock();
 
+            // ADDING CHECKS FOR NETWORKS THAT ARE TOO BIG BECAUSE OF A HUGE NUMBER OF EDGES
+            boolean tooManyEdges = false;
+            int numberOfNodes = nodesInEdgesStringified.getElementSet().size();
+            int numberOfEdges = coocsStringified.getElementSet().size();
+            if (numberOfEdges > 50_000 && numberOfEdges > (numberOfNodes * 50)) {
+                tooManyEdges = true;
+            }
+            if (tooManyEdges) {
+                int maxNumberEdgesInt = numberOfNodes * 50;
+                List<Map.Entry<Cooc, Integer>> sortDesckeepMostfrequent = coocs.sortDesckeepMostfrequent(coocs, maxNumberEdgesInt);
+                coocs = new Multiset();
+                nodesInEdgesStringified = new Multiset();
+                for (Map.Entry<Cooc, Integer> entry : sortDesckeepMostfrequent) {
+                    coocs.addSeveral(entry.getKey(), entry.getValue());
+                    nodesInEdgesStringified.addOne(entry.getKey().a.getOriginalFormLemmatized());
+                    nodesInEdgesStringified.addOne(entry.getKey().b.getOriginalFormLemmatized());
+                }
+            }
+
             /* CREATING GEPHI GRAPH  */
             clock = new Clock("adding nodes to graph", silentClock);
 
@@ -548,6 +562,7 @@ public class CowoFunction {
                 nodesMap.put((String) nodeInGraph.getId(), nodeInGraph);
             }
             clock.closeAndPrintClock();
+
             clock = new Clock("adding edges to graph", silentClock);
 
             double maxValuePMI = 0.00001d;
@@ -582,11 +597,15 @@ public class CowoFunction {
                 }
             }
             /* RESCALING EDGE WEIGHTS FROM 0 TO 10  AND ADDING THE EDGES TO THE GRAPH */
+            Node nodeSource;
+            Node nodeTarget;
+            Edge edge;
+            Integer countEdge;
             for (Cooc cooc : coocs.getElementSet()) {
                 if (removedNodes.contains(cooc.a.getOriginalFormLemmatized()) || removedNodes.contains(cooc.b.getOriginalFormLemmatized())) {
                     continue;
                 }
-                Integer countEdge = coocsStringified.getCount(cooc.toString());
+                countEdge = coocsStringified.getCount(cooc.toString());
 
                 double edgeWeightRescaledToTen;
                 double edgeWeightBeforeRescaling = 0;
@@ -604,12 +623,12 @@ public class CowoFunction {
                         edgeWeightRescaledToTen = (double) edgeWeightBeforeRescaling * 10 / maxValueCountEdges;
                 }
 
-                Node nodeSource = nodesMap.get(cooc.a.getOriginalFormLemmatized());
-                Node nodeTarget = nodesMap.get(cooc.b.getOriginalFormLemmatized());
-                Edge edge = factory.newEdge(nodeSource, nodeTarget, 0, edgeWeightRescaledToTen, false);
+                nodeSource = nodesMap.get(cooc.a.getOriginalFormLemmatized());
+                nodeTarget = nodesMap.get(cooc.b.getOriginalFormLemmatized());
+                edge = factory.newEdge(nodeSource, nodeTarget, 0, edgeWeightRescaledToTen, false);
                 edge.setAttribute(countPairsColumn, countEdge);
                 if (typeCorrection.equals("pmi")) {
-                    float edgeWeightBeforeRescalingFloat = (float)edgeWeightBeforeRescaling;
+                    float edgeWeightBeforeRescalingFloat = (float) edgeWeightBeforeRescaling;
                     edge.setAttribute("pmi", edgeWeightBeforeRescalingFloat);
                 }
                 edgesForGraph.add(edge);
