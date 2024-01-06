@@ -112,28 +112,23 @@ public class CowoFunction {
             UmigonTokenizer.initialize();
 
             dm.getOriginalStringsPerLine().entrySet()
-                    .parallelStream()
+                    .stream()
                     .forEach(entry -> {
                         List<TextFragment> tokenized = null;
-                        try {
-                            tokenized = UmigonTokenizer.tokenize(entry.getValue().toLowerCase(), new HashSet());
-                            if (skipContentInParentheses && tokenized.size() >= 2) {
-                                TextFragment first = tokenized.get(0);
-                                TextFragment last = tokenized.get(tokenized.size() - 1);
-                                if (!(first.getOriginalForm().equals("(") && last.getOriginalForm().equals(")"))) {
-                                    dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
-                                } else {
-                                    String s = tokenized.stream().map(e -> e.toString()).reduce("", String::concat);
-                                    if (!s.chars().anyMatch(X -> Character.isLowerCase(X))) {
-                                        dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
-                                    }
-                                }
-                            } else {
+                        tokenized = UmigonTokenizer.tokenize(entry.getValue().toLowerCase(), new HashSet());
+                        if (skipContentInParentheses && tokenized.size() >= 2) {
+                            TextFragment first = tokenized.get(0);
+                            TextFragment last = tokenized.get(tokenized.size() - 1);
+                            if (!(first.getOriginalForm().equals("(") && last.getOriginalForm().equals(")"))) {
                                 dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
+                            } else {
+                                String s = tokenized.stream().map(e -> e.toString()).reduce("", String::concat);
+                                if (!s.chars().anyMatch(X -> Character.isLowerCase(X))) {
+                                    dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
+                                }
                             }
-
-                        } catch (IOException ex) {
-                            Exceptions.printStackTrace(ex);
+                        } else {
+                            dm.getTextFragmentsPerLine().put(entry.getKey(), tokenized);
                         }
                     });
 
@@ -145,7 +140,8 @@ public class CowoFunction {
             for (Map.Entry<Integer, List<TextFragment>> entry : dm.getTextFragmentsPerLine().entrySet()) {
                 Set<String> stringifiedNGrams = new HashSet();
                 List<NGram> nGramsForOneLine = new ArrayList();
-                List<SentenceLike> sentenceLikeFragments = SentenceLikeFragmentsDetector.returnSentenceLikeFragments(entry.getValue());
+                SentenceLikeFragmentsDetector sentenceDetector = new SentenceLikeFragmentsDetector();
+                List<SentenceLike> sentenceLikeFragments = sentenceDetector.returnSentenceLikeFragments(entry.getValue());
                 for (SentenceLike sentenceLikeFragment : sentenceLikeFragments) {
                     List<NGram> ngrams = NGramFinderBisForTextFragments.generateNgramsUpto(sentenceLikeFragment.getNgrams(), maxNGram);
                     sentenceLikeFragment.setNgrams(ngrams);
@@ -398,7 +394,7 @@ public class CowoFunction {
                             Collectors.summingLong(Map.Entry::getValue)
                     ));
 
-            Map<NGram, Long> deduplicatedMap = mergedMap.entrySet().parallelStream()
+            Map<NGram, Long> deduplicatedMap = mergedMap.entrySet().stream()
                     .collect(Collectors.toMap(
                             entry -> nGramsAndTheirCounts.keySet().parallelStream()
                                     .filter(ngram -> keyExtractor.apply(ngram).equals(entry.getKey()))
@@ -424,7 +420,7 @@ public class CowoFunction {
             clock = new Clock("calculating cooccurrences", silentClock);
             Multiset<Cooc> listCoocTotal = new Multiset();
 
-            dm.getCleanedAndStrippedNGramsPerLine().entrySet().parallelStream().forEach(entry -> {
+            dm.getCleanedAndStrippedNGramsPerLine().entrySet().forEach(entry -> {
 
                 Set<String> cleanedAndStrippedStringifiedNGramsForOneLine = entry.getValue();
                 /*
