@@ -1,5 +1,7 @@
 package net.clementlevallois.cowo.controller;
 
+import jakarta.json.Json;
+import jakarta.json.JsonObjectBuilder;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -22,8 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import net.clementlevallois.stopwords.StopWordsRemover;
@@ -37,6 +37,7 @@ import net.clementlevallois.umigon.ngram.ops.SentenceLikeFragmentsDetector;
 import net.clementlevallois.umigon.tokenizer.controller.UmigonTokenizer;
 import net.clementlevallois.utils.Clock;
 import net.clementlevallois.utils.Multiset;
+import net.clementlevallois.utils.TextCleaningOps;
 import org.gephi.graph.api.Column;
 import org.gephi.graph.api.Edge;
 import org.gephi.graph.api.Graph;
@@ -62,9 +63,13 @@ public class CowoFunction {
     private Map<Integer, String> mapResultLemmatization;
     private boolean flattenToAScii = false;
     private Clock clock;
-    private static boolean silentClock = true;
+    private static boolean silentClock = false;
     private static boolean skipContentInParentheses = false;
     private static boolean removeLeaves = false;
+    private String sessionId = "";
+    private String callbackURL = "";
+    private String dataPersistenceId = "";
+    private boolean messagesEnabled = false;
 
     public static void main(String[] args) throws IOException {
         CowoFunction cowo = new CowoFunction();
@@ -89,7 +94,8 @@ public class CowoFunction {
         skipContentInParentheses = false;
         int maxNGram = 4;
         boolean lemmatize = true;
-        String analyze = cowo.analyze(mapOfLines, lang, userSuppliedStopwords, minCharNumber, replaceStopwords, scientific, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
+        boolean removeAccents = true;
+        String analyze = cowo.analyze(mapOfLines, lang, userSuppliedStopwords, minCharNumber, replaceStopwords, scientific, removeAccents, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
         Files.writeString(Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\cowo--min-occ-4-words-removed.gexf"), analyze);
     }
 
@@ -97,17 +103,62 @@ public class CowoFunction {
         this.flattenToAScii = flattenToAScii;
     }
 
-    public String analyze(TreeMap<Integer, String> mapOfLinesParam, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, int minCoocFreq, int minTermFreq, String typeCorrection, int maxNGram, boolean lemmatize) {
+    public void setSessionIdAndCallbackURL(String sessionId, String callbackURL, String dataPersistenceId) {
+        this.sessionId = sessionId;
+        this.callbackURL = callbackURL;
+        this.dataPersistenceId = dataPersistenceId;
+        messagesEnabled = true;
+    }
+
+    private void sendMessageBackHome(String message) {
+        JsonObjectBuilder joBuilder = Json.createObjectBuilder();
+        joBuilder.add("info", "INTERMEDIARY");
+        joBuilder.add("message", message);
+        joBuilder.add("function", "cowo");
+        joBuilder.add("sessionId", sessionId);
+        joBuilder.add("dataPersistenceId", dataPersistenceId);
+        String joStringPayload = joBuilder.build().toString();
+        doTheSend(joStringPayload);
+    }
+
+    private void doTheSend(String payload) {
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            URI uri = new URI(callbackURL);
+
+            HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.ofString(payload);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .POST(bodyPublisher)
+                    .header("Content-Type", "application/json")
+                    .uri(uri)
+                    .build();
+
+            HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
+            String body = resp.body();
+        } catch (URISyntaxException | IOException | InterruptedException ex) {
+            Exceptions.printStackTrace(ex);
+        }
+    }
+
+    public String analyze(TreeMap<Integer, String> mapOfLinesParam, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, boolean removeAccents, int minCoocFreq, int minTermFreq, String typeCorrection, int maxNGram, boolean lemmatize) {
         ObjectOutputStream oos = null;
         DataManager dm = new DataManager();
-        dm.setMapOfLines(mapOfLinesParam);
+
         try {
             Clock globalClock = new Clock("global clock", silentClock);
             HttpRequest request;
             HttpClient client = HttpClient.newHttpClient();
-            Set<CompletableFuture> futures = new HashSet();
 
-            clock = new Clock("entering tokenization", silentClock);
+            Map<Integer, String> intermediaryMap = TextCleaningOps.doAllCleaningOps(mapOfLinesParam, removeAccents);
+            intermediaryMap = TextCleaningOps.putInLowerCase(intermediaryMap);
+            TreeMap<Integer, String> mapTree = new TreeMap(intermediaryMap);
+            dm.setMapOfLines(mapTree);
+
+            String message = "🪓 starting tokenization";
+            clock = new Clock(message, silentClock);
+            sendMessageBackHome(message);
+
             /* TOKENIZE */
             UmigonTokenizer.initialize();
 
@@ -135,8 +186,9 @@ public class CowoFunction {
             clock.closeAndPrintClock();
 
             /* ADD NGRAMS */
-            clock = new Clock("entering ngram addition", silentClock);
-
+            message = "🖇️ entering ngram addition";
+            clock = new Clock(message, silentClock);
+            sendMessageBackHome(message);
             for (Map.Entry<Integer, List<TextFragment>> entry : dm.getTextFragmentsPerLine().entrySet()) {
                 Set<String> stringifiedNGrams = new HashSet();
                 List<NGram> nGramsForOneLine = new ArrayList();
@@ -147,7 +199,7 @@ public class CowoFunction {
                     sentenceLikeFragment.setNgrams(ngrams);
                     nGramsForOneLine.addAll(ngrams);
                 }
-                /* removing ngrams that appeat several times in a given line.
+                /* removing ngrams that appear several times in a given line.
                 experience shows that it is better to avoid that a single line gets a lot of weight
                 just because it mentions some terms repeatedly
                  */
@@ -171,7 +223,11 @@ public class CowoFunction {
             stopwords removal - initialization
             
              */
-            clock = new Clock("initializing the stopword removal", silentClock);
+            message = "🧹 initializing the stopword removal";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             Set<String> stopwords = Stopwords.getStopWords(selectedLanguage).get("long");
             StopWordsRemover stopWordsRemover = new StopWordsRemover(minCharNumber, selectedLanguage);
             if (userSuppliedStopwords != null && !userSuppliedStopwords.isEmpty()) {
@@ -189,9 +245,12 @@ public class CowoFunction {
             }
             stopWordsRemover.addWordsToRemove(new HashSet());
             stopWordsRemover.addStopWordsToKeep(new HashSet());
-            clock.closeAndPrintClock();
+            clock = new Clock(message, silentClock);
 
-            clock = new Clock("creating a multiset to remove redundant ngrams", silentClock);
+            message = "➿ creating a multiset to remove redundant ngrams";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
 
             Multiset<String> multisetOfNGramsSoFarStringified = new Multiset();
             dm.getListOfnGramsGlobal()
@@ -219,7 +278,11 @@ public class CowoFunction {
 
             multisetOfNGramsSoFarStringified.getInternalMap().entrySet().removeIf(entry -> entry.getValue() < minOcc);
 
-            clock = new Clock("doing the redundant ngrams removal", silentClock);
+            message = "➿ doing the redundant ngrams removal";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             NGramDuplicatesCleaner cleaner = new NGramDuplicatesCleaner(stopwords);
             Map<String, Integer> goodSetWithoutDuplicates = cleaner.removeDuplicates(multisetOfNGramsSoFarStringified.getInternalMap(), maxNGram, true);
 
@@ -233,9 +296,13 @@ public class CowoFunction {
             clock.closeAndPrintClock();
 
             /* stopwords removal - run */
-            clock = new Clock("removing stopwords (1)", silentClock);
+            message = "🗑️ removing stopwords (1)";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
-                    .parallelStream()
+                    .stream()
                     .filter(ngram
                             -> !stopWordsRemover.shouldItBeRemoved(ngram.getCleanedAndStrippedNgramIfCondition(true))
                     && !stopWordsRemover.shouldItBeRemoved(ngram.getCleanedAndStrippedNgramIfCondition(false)))
@@ -243,8 +310,29 @@ public class CowoFunction {
 
             clock.closeAndPrintClock();
 
+            /*
+            capping the number of words to the 10,000 most frequent
+             because even with the lemmatization step that will occur below
+             we will likely end up at well above 9,000 words, which is more than enough for a network representation
+             */
+            message = "🧢 capping to 10_000 most freq ngrams";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
+            List<NGram> listOfnGramsGlobal = dm.getListOfnGramsGlobal();
+            Multiset<NGram> multisetToCap = new Multiset();
+            multisetToCap.addAllFromListOrSet(listOfnGramsGlobal);
+            Multiset<NGram> mostFrequentNGrams = multisetToCap.keepMostfrequent(multisetToCap, 10_000);
+            dm.setListOfnGramsGlobal(mostFrequentNGrams.toListOfAllOccurrences());
+            clock.closeAndPrintClock();
+
             /* LEMMATIZATION */
-            clock = new Clock("entering lemmatization", silentClock);
+            message = "💇 entering lemmatization";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             if (!lemmatize) {
                 for (NGram ngram : dm.getListOfnGramsGlobal()) {
                     String nonLemmatizedNGram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
@@ -277,24 +365,19 @@ public class CowoFunction {
                             .uri(uri)
                             .build();
 
-                    CompletableFuture<Void> future = client.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray()).thenAccept(resp -> {
-                        if (resp.statusCode() == 200) {
-                            byte[] body = resp.body();
-                            try (
-                                    ByteArrayInputStream bis = new ByteArrayInputStream(body); ObjectInputStream ois = new ObjectInputStream(bis)) {
-                                mapResultLemmatization = (Map<Integer, String>) ois.readObject();
-                            } catch (IOException | ClassNotFoundException ex) {
-                                System.out.println("error in deserialization of lemmatizer maps API result");
-                            }
-                        } else {
-                            System.out.println("lemmatization lightweight maps returned by the API was not a 200 code");
-                            mapResultLemmatization = new HashMap();
+                    HttpResponse<byte[]> resp = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    if (resp.statusCode() == 200) {
+                        byte[] body = resp.body();
+                        try (
+                                ByteArrayInputStream bis = new ByteArrayInputStream(body); ObjectInputStream ois = new ObjectInputStream(bis)) {
+                            mapResultLemmatization = (Map<Integer, String>) ois.readObject();
+                        } catch (IOException | ClassNotFoundException ex) {
+                            System.out.println("error in deserialization of lemmatizer maps API result");
                         }
+                    } else {
+                        System.out.println("lemmatization lightweight maps returned by the API was not a 200 code");
+                        mapResultLemmatization = new HashMap();
                     }
-                    );
-                    futures.add(future);
-                    CompletableFuture<Void> combinedFuture = CompletableFuture.allOf(futures.toArray((new CompletableFuture[0])));
-                    combinedFuture.join();
 
                 } else {
                     try {
@@ -329,7 +412,10 @@ public class CowoFunction {
                 }
                 clock.closeAndPrintClock();
 
-                clock = new Clock("finishing up lemmatization", silentClock);
+                message = "💇 finishing up lemmatization";
+                clock = new Clock(message, silentClock);
+
+                sendMessageBackHome(message);
 
                 for (Integer key : mapInputCleanedAndStripped.keySet()) {
                     String input = mapInputCleanedAndStripped.get(key);
@@ -353,7 +439,10 @@ public class CowoFunction {
             the reason for this second run is that the lemmatization step has modified terms,
             
             hence creating new forms that might well be in the list of stopwords */
-            clock = new Clock("second round of stopwords removal", silentClock);
+            message = "🧺 second round of stopwords removal";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
 
             dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
                     .parallelStream()
@@ -367,7 +456,10 @@ public class CowoFunction {
             clock.closeAndPrintClock();
 
             /* REMOVE SMALL WORDS, NUMBERS */
-            clock = new Clock("removal of small words and digits", silentClock);
+            message = "✏️ removal of small words and digits";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
 
             dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
                     .parallelStream()
@@ -382,7 +474,11 @@ public class CowoFunction {
             REMOVING THOSE THAT APPEAR LESS THAN minTermFreq
             KEEPING ONLY THE N MOST FREQUENT
              */
-            clock = new Clock("counting ngrams, merging the lemmatized and non lemmatized versions, keeping only the top terms", silentClock);
+            message = "🖩counting ngrams, merging the lemmatized and non lemmatized versions, keeping only the top terms";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             Map<NGram, Long> nGramsAndTheirCounts = dm.getListOfnGramsGlobal().stream()
                     .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
 
@@ -417,8 +513,22 @@ public class CowoFunction {
             clock.closeAndPrintClock();
 
             /* COUNTING CO-OCCURRENCES  */
-            clock = new Clock("calculating cooccurrences", silentClock);
+            message = "🧠 calculating cooccurrences";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             Multiset<Cooc> listCoocTotal = new Multiset();
+
+            Map<String, NGram> cleanedAndStrippedToNgram = new HashMap();
+            for (NGram ngram : dm.getnGramsAndGlobalCount().keySet()) {
+                cleanedAndStrippedToNgram.put(ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii), ngram);
+            }
+
+            Map<String, NGram> lemmatizedToNgram = new HashMap();
+            for (NGram ngram : dm.getnGramsAndGlobalCount().keySet()) {
+                lemmatizedToNgram.put(ngram.getOriginalFormLemmatized(), ngram);
+            }
 
             dm.getCleanedAndStrippedNGramsPerLine().entrySet().forEach(entry -> {
 
@@ -427,17 +537,29 @@ public class CowoFunction {
                 the use of a concurrent hashmap is to make sure we retrieve all different ngrams in a given line
                 using their lemmatized form as a key in the map helps ensure unicity
                  */
-                ConcurrentHashMap<String, NGram> ngramsInCurrentLine = new ConcurrentHashMap();
-                dm.getnGramsAndGlobalCount().keySet().parallelStream()
-                        .forEach(ngram -> {
-                            String cleanedAndStrippedNgram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
-                            if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(cleanedAndStrippedNgram)) {
-                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
-                            } else if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(ngram.getOriginalFormLemmatized())) {
-                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
-                            }
-                        });
+                Map<String, NGram> ngramsInCurrentLine = new HashMap();
 
+                for (String oneNGramForOneLine : cleanedAndStrippedStringifiedNGramsForOneLine) {
+                    if (cleanedAndStrippedToNgram.containsKey(oneNGramForOneLine)) {
+                        NGram nGramFound = cleanedAndStrippedToNgram.get(oneNGramForOneLine);
+                        ngramsInCurrentLine.put(nGramFound.getOriginalFormLemmatized(), nGramFound);
+                    } else if (lemmatizedToNgram.containsKey(oneNGramForOneLine)) {
+                        NGram nGramFound = lemmatizedToNgram.get(oneNGramForOneLine);
+                        ngramsInCurrentLine.put(nGramFound.getOriginalFormLemmatized(), nGramFound);
+                    }
+                }
+
+//               
+//                dm.getnGramsAndGlobalCount().keySet().parallelStream()
+//                        .forEach(ngram -> {
+//                            String cleanedAndStrippedNgram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
+//                            if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(cleanedAndStrippedNgram)) {
+//                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
+//                            } else if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(ngram.getOriginalFormLemmatized())) {
+//                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
+//                            }
+//                        });
+//
                 if (ngramsInCurrentLine.size() > 1) {
 
                     // COOC CREATION FOR TERMS IN THE LINE
@@ -454,7 +576,11 @@ public class CowoFunction {
             clock.closeAndPrintClock();
 
             /* REMOVING UNFREQUENT COOC  */
-            clock = new Clock("removing infrequent cooc", silentClock);
+            message = "🧹 removing infrequent cooc";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
+
             Integer nbCoocs = listCoocTotal.getSize();
             if (nbCoocs < 50_000) {
                 minCoocFreq = 1;
@@ -499,7 +625,10 @@ public class CowoFunction {
             }
 
             /* CREATING GEPHI GRAPH  */
-            clock = new Clock("adding nodes to graph", silentClock);
+            message = "⚽ adding nodes to graph";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
 
             Map<String, Node> nodesMap = new HashMap();
 
@@ -559,7 +688,10 @@ public class CowoFunction {
             }
             clock.closeAndPrintClock();
 
-            clock = new Clock("adding edges to graph", silentClock);
+            message = "🔗 adding edges to graph";
+            clock = new Clock(message, silentClock);
+
+            sendMessageBackHome(message);
 
             double maxValuePMI = 0.00001d;
             float maxValueCountEdges = 0;
@@ -631,7 +763,10 @@ public class CowoFunction {
             }
             graphResult.addAllEdges(edgesForGraph);
             clock.closeAndPrintClock();
-            clock = new Clock("exporting graph", silentClock);
+
+            message = "exporting graph";
+            clock = new Clock(message, silentClock);
+            sendMessageBackHome(message);
 
             ExportController ec = Lookup.getDefault().lookup(ExportController.class);
             ExporterGEXF exporterGexf = (ExporterGEXF) ec.getExporter("gexf");
@@ -648,7 +783,7 @@ public class CowoFunction {
             clock.closeAndPrintClock();
             globalClock.closeAndPrintClock();
             return resultGexf;
-        } catch (URISyntaxException | IOException ex) {
+        } catch (URISyntaxException | IOException | InterruptedException ex) {
             Exceptions.printStackTrace(ex);
         } finally {
             try {
