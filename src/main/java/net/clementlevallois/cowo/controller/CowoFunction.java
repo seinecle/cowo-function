@@ -63,7 +63,7 @@ public class CowoFunction {
     private Map<Integer, String> mapResultLemmatization;
     private boolean flattenToAScii = false;
     private Clock clock;
-    private static boolean silentClock = false;
+    private static boolean silentClock = true;
     private static boolean skipContentInParentheses = false;
     private static boolean removeLeaves = false;
     private String sessionId = "";
@@ -122,6 +122,9 @@ public class CowoFunction {
     }
 
     private void doTheSend(String payload) {
+        if (callbackURL == null || callbackURL.isBlank()){
+            return;
+        }
         try {
             HttpClient client = HttpClient.newHttpClient();
             URI uri = new URI(callbackURL);
@@ -134,8 +137,7 @@ public class CowoFunction {
                     .uri(uri)
                     .build();
 
-            HttpResponse<String> resp = client.send(request, HttpResponse.BodyHandlers.ofString());
-            String body = resp.body();
+            client.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (URISyntaxException | IOException | InterruptedException ex) {
             Exceptions.printStackTrace(ex);
         }
@@ -166,7 +168,7 @@ public class CowoFunction {
                     .stream()
                     .forEach(entry -> {
                         List<TextFragment> tokenized = null;
-                        tokenized = UmigonTokenizer.tokenize(entry.getValue().toLowerCase(), new HashSet());
+                        tokenized = UmigonTokenizer.tokenize(entry.getValue().toLowerCase().trim(), new HashSet());
                         if (skipContentInParentheses && tokenized.size() >= 2) {
                             TextFragment first = tokenized.get(0);
                             TextFragment last = tokenized.get(tokenized.size() - 1);
@@ -228,7 +230,6 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
-            Set<String> stopwords = Stopwords.getStopWords(selectedLanguage).get("long");
             StopWordsRemover stopWordsRemover = new StopWordsRemover(minCharNumber, selectedLanguage);
             if (userSuppliedStopwords != null && !userSuppliedStopwords.isEmpty()) {
                 stopWordsRemover.useUSerSuppliedStopwords(userSuppliedStopwords, replaceStopwords);
@@ -249,7 +250,6 @@ public class CowoFunction {
 
             message = "➿ creating a multiset to remove redundant ngrams";
             clock = new Clock(message, silentClock);
-
             sendMessageBackHome(message);
 
             Multiset<String> multisetOfNGramsSoFarStringified = new Multiset();
@@ -283,6 +283,7 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
+            Set<String> stopwords = Stopwords.getStopWords(selectedLanguage).get("long");
             NGramDuplicatesCleaner cleaner = new NGramDuplicatesCleaner(stopwords);
             Map<String, Integer> goodSetWithoutDuplicates = cleaner.removeDuplicates(multisetOfNGramsSoFarStringified.getInternalMap(), maxNGram, true);
 
