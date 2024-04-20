@@ -47,6 +47,8 @@ import org.gephi.graph.api.GraphModel;
 import org.gephi.graph.api.Node;
 import org.gephi.io.exporter.api.ExportController;
 import org.gephi.io.exporter.plugin.ExporterGEXF;
+import org.gephi.layout.plugin.forceAtlas2.ForceAtlas2;
+import org.gephi.layout.plugin.forceAtlas2.ForceAtlas2Builder;
 import org.gephi.project.api.ProjectController;
 import org.gephi.project.api.Workspace;
 import org.openide.util.Exceptions;
@@ -122,7 +124,7 @@ public class CowoFunction {
     }
 
     private void doTheSend(String payload) {
-        if (callbackURL == null || callbackURL.isBlank()){
+        if (callbackURL == null || callbackURL.isBlank()) {
             return;
         }
         try {
@@ -765,7 +767,13 @@ public class CowoFunction {
             graphResult.addAllEdges(edgesForGraph);
             clock.closeAndPrintClock();
 
-            message = "exporting graph";
+            message = "🗺️ applying a Force Atlas mapping for 3 seconds";
+            sendMessageBackHome(message);
+            clock = new Clock(message, silentClock);
+            apply_FA2_layout(gm);
+            clock.closeAndPrintClock();
+
+            message = "🛥️ exporting graph";
             clock = new Clock(message, silentClock);
             sendMessageBackHome(message);
 
@@ -773,7 +781,7 @@ public class CowoFunction {
             ExporterGEXF exporterGexf = (ExporterGEXF) ec.getExporter("gexf");
             exporterGexf.setWorkspace(workspace);
             exporterGexf.setExportDynamic(false);
-            exporterGexf.setExportPosition(false);
+            exporterGexf.setExportPosition(true);
             exporterGexf.setExportSize(false);
             exporterGexf.setExportColors(false);
             exporterGexf.setExportMeta(true);
@@ -798,5 +806,35 @@ public class CowoFunction {
         System.out.println("error in cowo function");
         return "error in cowo function";
 
+    }
+
+    private void apply_FA2_layout(GraphModel gm) {
+        ForceAtlas2Builder layoutBuilder = new ForceAtlas2Builder();
+        ForceAtlas2 layout = new ForceAtlas2(layoutBuilder);
+        layout.setGraphModel(gm);
+        layout.resetPropertiesValues();
+
+        int threads = Runtime.getRuntime().availableProcessors() * 2 - 1;
+
+        System.out.println("threads being used: " + threads);
+
+        layout.setScalingRatio(50d);
+        layout.setThreadsCount(threads);
+        layout.setAdjustSizes(Boolean.FALSE);
+        layout.setJitterTolerance(2d);
+        layout.setBarnesHutOptimize(Boolean.TRUE);
+        layout.setBarnesHutTheta(2d);
+
+        layout.initAlgo();
+        int counterLoops = 1;
+        long start = System.currentTimeMillis();
+        for (int i = 0; layout.canAlgo(); i++) {
+            layout.goAlgo();
+            long now = System.currentTimeMillis();
+            if ((now - start) / 1000 > 3) {
+                break;
+            }
+        }
+        layout.endAlgo();
     }
 }
