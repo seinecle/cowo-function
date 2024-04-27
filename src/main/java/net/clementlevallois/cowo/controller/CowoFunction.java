@@ -382,36 +382,6 @@ public class CowoFunction {
                         mapResultLemmatization = new HashMap();
                     }
 
-                } else {
-                    try {
-                        HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.ofByteArray(data);
-
-                        URI uri = new URI("http://localhost:7000/lemmatize/map/" + selectedLanguage);
-
-                        request = HttpRequest.newBuilder()
-                                .uri(uri)
-                                .POST(bodyPublisher)
-                                .build();
-                        client = HttpClient.newHttpClient();
-
-                        HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-                        if (response.statusCode() == 200) {
-                            byte[] body = response.body();
-                            try (
-                                    ByteArrayInputStream bis = new ByteArrayInputStream(body); ObjectInputStream ois = new ObjectInputStream(bis)) {
-                                mapResultLemmatization = (Map<Integer, String>) ois.readObject();
-                            } catch (IOException | ClassNotFoundException ex) {
-                                System.out.println("error in deserialization of lemmatizer heavyweight multiset ngrams API result");
-                            }
-                        } else {
-                            System.out.println("lemmatization heavyweight multiset ngrams returned by the API was not a 200 code");
-                            mapResultLemmatization = new HashMap();
-                        }
-
-                    } catch (URISyntaxException | IOException | InterruptedException ex) {
-                        System.out.println("heavyweight lemmatizer was offline");
-                        mapResultLemmatization = new HashMap();
-                    }
                 }
                 clock.closeAndPrintClock();
 
