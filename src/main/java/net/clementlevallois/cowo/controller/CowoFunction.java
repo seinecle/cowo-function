@@ -605,8 +605,19 @@ public class CowoFunction {
 
             Map<String, Node> nodesMap = new HashMap();
 
+// Get the project controller
             ProjectController pc = Lookup.getDefault().lookup(ProjectController.class);
+
+// Close any existing workspace/project
+            if (pc.getCurrentWorkspace() != null) {
+                pc.closeCurrentWorkspace();
+            }
+            if (pc.getCurrentProject() != null) {
+                pc.closeCurrentProject();
+            }
+            
             pc.newProject();
+            
             Workspace workspace = pc.getCurrentWorkspace();
             workspace.getProject().getProjectMetadata().setAuthor("created with nocodefunctions.com");
             String description
@@ -615,7 +626,11 @@ public class CowoFunction {
                     + "; minimum term frequency: " + minTermFreq + "; use science stopwords: "
                     + isScientificCorpus + "; max length of ngrams: " + maxNGram + "; replace with own stopwords: " + replaceStopwords;
             workspace.getProject().getProjectMetadata().setDescription(description);
+
             GraphModel gm = Lookup.getDefault().lookup(GraphController.class).getGraphModel(workspace);
+            // Clear any existing tables (just to be extra safe)
+            gm.getGraph().clear();
+
             Column countTermsColumn = gm.getNodeTable().addColumn("countTerms", Integer.TYPE);
             Column countPairsColumn = gm.getEdgeTable().addColumn("countPairs", Integer.TYPE);
             if (typeCorrection.equals("pmi")) {
