@@ -605,20 +605,11 @@ public class CowoFunction {
 
             Map<String, Node> nodesMap = new HashMap();
 
-// Get the project controller
+// Create a new project model without affecting global state
             ProjectController pc = Lookup.getDefault().lookup(ProjectController.class);
+            Workspace workspace = pc.newWorkspace(pc.newProject());
+            pc.openWorkspace(workspace);  // Open this specific workspace
 
-// Close any existing workspace/project
-            if (pc.getCurrentWorkspace() != null) {
-                pc.closeCurrentWorkspace();
-            }
-            if (pc.getCurrentProject() != null) {
-                pc.closeCurrentProject();
-            }
-            
-            pc.newProject();
-            
-            Workspace workspace = pc.getCurrentWorkspace();
             workspace.getProject().getProjectMetadata().setAuthor("created with nocodefunctions.com");
             String description
                     = "language: " + selectedLanguage + "; lemmatization: " + lemmatize + "; minimum number of characters: "
@@ -627,8 +618,10 @@ public class CowoFunction {
                     + isScientificCorpus + "; max length of ngrams: " + maxNGram + "; replace with own stopwords: " + replaceStopwords;
             workspace.getProject().getProjectMetadata().setDescription(description);
 
+// Get graph model for THIS workspace specifically
             GraphModel gm = Lookup.getDefault().lookup(GraphController.class).getGraphModel(workspace);
-            // Clear any existing tables (just to be extra safe)
+
+// Clear any existing tables (just to be extra safe)
             gm.getGraph().clear();
 
             Column countTermsColumn = gm.getNodeTable().addColumn("countTerms", Integer.TYPE);
