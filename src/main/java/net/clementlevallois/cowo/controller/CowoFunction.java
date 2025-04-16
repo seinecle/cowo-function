@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -62,7 +63,7 @@ public class CowoFunction {
 
     private final int MOST_FREQUENT_TERMS = 2_000;
 
-    private Map<Integer, String> mapResultLemmatization;
+    private Map<Integer, String> mapResultLemmatization = new HashMap();
     private boolean flattenToAScii = false;
     private Clock clock;
     private static boolean silentClock = true;
@@ -87,6 +88,7 @@ public class CowoFunction {
         String lang = "pt";
         int minCharNumber = 3;
         boolean replaceStopwords = false;
+        boolean removeFirstNames = true;
         boolean scientific = true;
         removeLeaves = true;
         int minTermFreq = 4;
@@ -97,7 +99,7 @@ public class CowoFunction {
         int maxNGram = 4;
         boolean lemmatize = true;
         boolean removeAccents = true;
-        String analyze = cowo.analyze(mapOfLines, lang, userSuppliedStopwords, minCharNumber, replaceStopwords, scientific, removeAccents, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
+        String analyze = cowo.analyze(mapOfLines, lang, userSuppliedStopwords, minCharNumber, replaceStopwords, scientific, removeFirstNames, removeAccents, minCooCFreq, minTermFreq, correction, maxNGram, lemmatize);
         Files.writeString(Path.of("C:\\Users\\levallois\\OneDrive - Aescra Emlyon Business School\\Bureau\\tests\\cowo--min-occ-4-words-removed.gexf"), analyze);
     }
 
@@ -141,13 +143,16 @@ public class CowoFunction {
 
             client.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (URISyntaxException | IOException | InterruptedException ex) {
+            System.out.println("call back url was: " + callbackURL);
             Exceptions.printStackTrace(ex);
         }
     }
 
-    public String analyze(TreeMap<Integer, String> mapOfLinesParam, String selectedLanguage, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, boolean removeAccents, int minCoocFreq, int minTermFreq, String typeCorrection, int maxNGram, boolean lemmatize) {
+    public String analyze(TreeMap<Integer, String> mapOfLinesParam, String commaSeparatedLanguageCodes, Set<String> userSuppliedStopwords, int minCharNumber, boolean replaceStopwords, boolean isScientificCorpus, boolean removeFirstNames, boolean removeAccents, int minCoocFreq, int minTermFreq, String typeCorrection, int maxNGram, boolean lemmatize) {
         ObjectOutputStream oos = null;
         DataManager dm = new DataManager();
+        ProjectController pc = Lookup.getDefault().lookup(ProjectController.class);
+        Workspace workspace = null;
 
         try {
             Clock globalClock = new Clock("global clock", silentClock);
@@ -158,6 +163,8 @@ public class CowoFunction {
             intermediaryMap = TextCleaningOps.putInLowerCase(intermediaryMap);
             TreeMap<Integer, String> mapTree = new TreeMap(intermediaryMap);
             dm.setMapOfLines(mapTree);
+
+            List<String> languages = Arrays.asList(commaSeparatedLanguageCodes.split(","));
 
             String message = "🪓 starting tokenization";
             clock = new Clock(message, silentClock);
@@ -232,22 +239,44 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
-            StopWordsRemover stopWordsRemover = new StopWordsRemover(minCharNumber, selectedLanguage);
+            List<StopWordsRemover> stopwordRemovers = new ArrayList();
+            for (String language : languages) {
+                stopwordRemovers.add(new StopWordsRemover(minCharNumber, language));
+            }
+
             if (userSuppliedStopwords != null && !userSuppliedStopwords.isEmpty()) {
-                stopWordsRemover.useUSerSuppliedStopwords(userSuppliedStopwords, replaceStopwords);
-            }
-            if (isScientificCorpus) {
-                if (selectedLanguage.equals("en")) {
-                    Set<String> scientificStopwordsInEnglish = Stopwords.getScientificStopwordsInEnglish();
-                    stopWordsRemover.addFieldSpecificStopWords(scientificStopwordsInEnglish);
-                }
-                if (selectedLanguage.equals("fr")) {
-                    Set<String> scientificStopwordsInFrench = Stopwords.getScientificStopwordsInFrench();
-                    stopWordsRemover.addFieldSpecificStopWords(scientificStopwordsInFrench);
+                for (StopWordsRemover swr : stopwordRemovers) {
+                    swr.useUSerSuppliedStopwords(userSuppliedStopwords, replaceStopwords);
                 }
             }
-            stopWordsRemover.addWordsToRemove(new HashSet());
-            stopWordsRemover.addStopWordsToKeep(new HashSet());
+
+            for (StopWordsRemover swr : stopwordRemovers) {
+                swr.addWordsToRemove(new HashSet());
+                swr.addStopWordsToKeep(new HashSet());
+                if (swr.getLanguage().equals("en")) {
+                    if (isScientificCorpus) {
+                        Set<String> scientificStopwordsInEnglish = Stopwords.getScientificStopwordsInEnglish();
+                        swr.addFieldSpecificStopWords(scientificStopwordsInEnglish);
+                    }
+
+                    if (removeFirstNames) {
+                        Set<String> englishFirstNames = Stopwords.getFirstNames("en");
+                        swr.addFieldSpecificStopWords(englishFirstNames);
+                    }
+                }
+                if (swr.getLanguage().equals("fr")) {
+                    if (isScientificCorpus) {
+                        Set<String> scientificStopwordsInFrench = Stopwords.getScientificStopwordsInFrench();
+                        swr.addFieldSpecificStopWords(scientificStopwordsInFrench);
+                    }
+
+                    if (removeFirstNames) {
+                        Set<String> frenchFirstNames = Stopwords.getFirstNames("fr");
+                        swr.addFieldSpecificStopWords(frenchFirstNames);
+                    }
+                }
+            }
+
             clock = new Clock(message, silentClock);
 
             message = "➿ creating a multiset to remove redundant ngrams";
@@ -285,7 +314,10 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
-            Set<String> stopwords = Stopwords.getStopWords(selectedLanguage).get("long");
+            Set<String> stopwords = new HashSet();
+            for (String language : languages) {
+                stopwords.addAll(Stopwords.getStopWords(language).get("long"));
+            }
             NGramDuplicatesCleaner cleaner = new NGramDuplicatesCleaner(stopwords);
             Map<String, Integer> goodSetWithoutDuplicates = cleaner.removeDuplicates(multisetOfNGramsSoFarStringified.getInternalMap(), maxNGram, true);
 
@@ -304,12 +336,27 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
-            dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
-                    .stream()
-                    .filter(ngram
-                            -> !stopWordsRemover.shouldItBeRemoved(ngram.getCleanedAndStrippedNgramIfCondition(true))
-                    && !stopWordsRemover.shouldItBeRemoved(ngram.getCleanedAndStrippedNgramIfCondition(false)))
-                    .collect(Collectors.toList()));
+            
+            List<NGram> listOfnGramsGlobal = dm.getListOfnGramsGlobal();
+            List<NGram> listOfnGramsGlobalMinusStopwords = new ArrayList();
+            
+            for (NGram ngram: listOfnGramsGlobal){
+                String wordToTestStripped = ngram.getCleanedAndStrippedNgramIfCondition(true);
+                String wordToTest = ngram.getCleanedAndStrippedNgramIfCondition(false);
+                boolean removal = false;
+                for (StopWordsRemover swr : stopwordRemovers) {
+                    boolean shouldNgramStrippedBeRemoved = swr.shouldItBeRemoved(wordToTestStripped);
+                    boolean shouldNgramBeRemoved = swr.shouldItBeRemoved(wordToTest);
+                    if (shouldNgramStrippedBeRemoved || shouldNgramBeRemoved){
+                        removal = true;
+                        break;
+                    }
+                }
+                if (!removal){
+                    listOfnGramsGlobalMinusStopwords.add(ngram);
+                }
+            }
+            dm.setListOfnGramsGlobal(listOfnGramsGlobalMinusStopwords);
 
             clock.closeAndPrintClock();
 
@@ -323,7 +370,7 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
-            List<NGram> listOfnGramsGlobal = dm.getListOfnGramsGlobal();
+            listOfnGramsGlobal = dm.getListOfnGramsGlobal();
             Multiset<NGram> multisetToCap = new Multiset();
             multisetToCap.addAllFromListOrSet(listOfnGramsGlobal);
             Multiset<NGram> mostFrequentNGrams = multisetToCap.keepMostfrequent(multisetToCap, 10_000);
@@ -357,11 +404,11 @@ public class CowoFunction {
                 oos.flush();
                 byte[] data = bos.toByteArray();
 
-                if (selectedLanguage.equals("en") | selectedLanguage.equals("fr") | selectedLanguage.equals("es")) {
+                if (languages.contains("en") | languages.contains("fr") | languages.contains("es")) {
 
                     HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.ofByteArray(data);
 
-                    URI uri = new URI("http://localhost:7002/api/lemmatizer_light/map/" + selectedLanguage);
+                    URI uri = new URI("http://localhost:7002/api/lemmatizer_light/map/" + commaSeparatedLanguageCodes);
 
                     request = HttpRequest.newBuilder()
                             .POST(bodyPublisher)
@@ -392,7 +439,7 @@ public class CowoFunction {
 
                 for (Integer key : mapInputCleanedAndStripped.keySet()) {
                     String input = mapInputCleanedAndStripped.get(key);
-                    if (mapResultLemmatization.containsKey(key)) {
+                    if (mapResultLemmatization != null && mapResultLemmatization.containsKey(key)) {
                         String output = mapResultLemmatization.get(key);
                         dm.getStringifiedCleanedAndStrippedNGramToLemmatizedForm().put(input, output);
                     } else {
@@ -417,15 +464,27 @@ public class CowoFunction {
 
             sendMessageBackHome(message);
 
-            dm.setListOfnGramsGlobal(dm.getListOfnGramsGlobal()
-                    .parallelStream()
-                    .filter(ngram -> {
-                        boolean keepIt = !stopWordsRemover.shouldItBeRemoved(ngram.getOriginalFormLemmatized());
-                        return keepIt;
-                    })
-                    .collect(Collectors.toList())
-            );
-
+            
+            
+            listOfnGramsGlobal = dm.getListOfnGramsGlobal();
+            listOfnGramsGlobalMinusStopwords = new ArrayList();
+            
+            for (NGram ngram: listOfnGramsGlobal){
+                String wordToTest = ngram.getOriginalFormLemmatized();
+                boolean removal = false;
+                for (StopWordsRemover swr : stopwordRemovers) {
+                    boolean shouldNgramBeRemoved = swr.shouldItBeRemoved(wordToTest);
+                    if (shouldNgramBeRemoved){
+                        removal = true;
+                        break;
+                    }
+                }
+                if (!removal){
+                    listOfnGramsGlobalMinusStopwords.add(ngram);
+                }
+            }
+            dm.setListOfnGramsGlobal(listOfnGramsGlobalMinusStopwords);
+            
             clock.closeAndPrintClock();
 
             /* REMOVE SMALL WORDS, NUMBERS */
@@ -522,17 +581,6 @@ public class CowoFunction {
                     }
                 }
 
-//               
-//                dm.getnGramsAndGlobalCount().keySet().parallelStream()
-//                        .forEach(ngram -> {
-//                            String cleanedAndStrippedNgram = ngram.getCleanedAndStrippedNgramIfCondition(flattenToAScii);
-//                            if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(cleanedAndStrippedNgram)) {
-//                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
-//                            } else if (cleanedAndStrippedStringifiedNGramsForOneLine.contains(ngram.getOriginalFormLemmatized())) {
-//                                ngramsInCurrentLine.put(ngram.getOriginalFormLemmatized(), ngram);
-//                            }
-//                        });
-//
                 if (ngramsInCurrentLine.size() > 1) {
 
                     // COOC CREATION FOR TERMS IN THE LINE
@@ -605,14 +653,14 @@ public class CowoFunction {
 
             Map<String, Node> nodesMap = new HashMap();
 
-// Create a new project model without affecting global state
-            ProjectController pc = Lookup.getDefault().lookup(ProjectController.class);
-            Workspace workspace = pc.newWorkspace(pc.newProject());
+            // Create a new project model without affecting global state
+            pc = Lookup.getDefault().lookup(ProjectController.class);
+            workspace = pc.newWorkspace(pc.newProject());
             pc.openWorkspace(workspace);  // Open this specific workspace
 
             workspace.getProject().getProjectMetadata().setAuthor("created with nocodefunctions.com");
             String description
-                    = "language: " + selectedLanguage + "; lemmatization: " + lemmatize + "; minimum number of characters: "
+                    = "language: " + commaSeparatedLanguageCodes + "; lemmatization: " + lemmatize + "; minimum number of characters: "
                     + minCharNumber + "; minimunm cooccurrence frequency: " + minCoocFreq + "; type of correction: " + typeCorrection
                     + "; minimum term frequency: " + minTermFreq + "; use science stopwords: "
                     + isScientificCorpus + "; max length of ngrams: " + maxNGram + "; replace with own stopwords: " + replaceStopwords;
@@ -773,6 +821,10 @@ public class CowoFunction {
         } catch (URISyntaxException | IOException | InterruptedException ex) {
             Exceptions.printStackTrace(ex);
         } finally {
+            if (workspace != null) {
+                pc.closeCurrentWorkspace();
+                pc.closeCurrentProject();
+            }
             try {
                 if (oos != null) {
                     oos.close();

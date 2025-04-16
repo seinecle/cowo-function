@@ -30,6 +30,7 @@ public class DataManager {
 
     private Map<String, NGram> mappingNonLemmatizedFormToNGram = new HashMap();
     private Map<String, NGram> mappingLemmatizedFormToNGram = new HashMap();
+    private Multiset<Cooc> listCoocTotal;
 
     public DataManager() {
         originalStringsPerLine = new TreeMap();
@@ -103,7 +104,13 @@ public class DataManager {
     public void setnGramsAndGlobalCount(Map<NGram, Long> nGramsAndGlobalCount) {
         this.nGramsAndGlobalCount = nGramsAndGlobalCount;
     }
-    
-    
+
+    public void setListCoocTotal(Multiset<Cooc> listCoocTotal) {
+        this.listCoocTotal = listCoocTotal;
+    }
+
+    public Multiset<Cooc> getListCoocTotal() {
+        return listCoocTotal;
+    }
 
 }
