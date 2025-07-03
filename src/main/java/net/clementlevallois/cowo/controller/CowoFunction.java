@@ -69,9 +69,8 @@ public class CowoFunction {
     private static boolean silentClock = true;
     private static boolean skipContentInParentheses = false;
     private static boolean removeLeaves = false;
-    private String sessionId = "";
     private String callbackURL = "";
-    private String dataPersistenceId = "";
+    private String jobId = "";
     private boolean messagesEnabled = false;
 
     public static void main(String[] args) throws IOException {
@@ -107,10 +106,9 @@ public class CowoFunction {
         this.flattenToAScii = flattenToAScii;
     }
 
-    public void setSessionIdAndCallbackURL(String sessionId, String callbackURL, String dataPersistenceId) {
-        this.sessionId = sessionId;
+    public void setSessionIdAndCallbackURL(String callbackURL, String jobId) {
         this.callbackURL = callbackURL;
-        this.dataPersistenceId = dataPersistenceId;
+        this.jobId = jobId;
         messagesEnabled = true;
     }
 
@@ -119,8 +117,7 @@ public class CowoFunction {
         joBuilder.add("info", "INTERMEDIARY");
         joBuilder.add("message", message);
         joBuilder.add("function", "cowo");
-        joBuilder.add("sessionId", sessionId);
-        joBuilder.add("dataPersistenceId", dataPersistenceId);
+        joBuilder.add("jobId", jobId);
         String joStringPayload = joBuilder.build().toString();
         doTheSend(joStringPayload);
     }
@@ -666,10 +663,10 @@ public class CowoFunction {
                     + isScientificCorpus + "; max length of ngrams: " + maxNGram + "; replace with own stopwords: " + replaceStopwords;
             workspace.getProject().getProjectMetadata().setDescription(description);
 
-// Get graph model for THIS workspace specifically
+            // Get graph model for THIS workspace specifically
             GraphModel gm = Lookup.getDefault().lookup(GraphController.class).getGraphModel(workspace);
 
-// Clear any existing tables (just to be extra safe)
+            // Clear any existing tables (just to be extra safe)
             gm.getGraph().clear();
 
             Column countTermsColumn = gm.getNodeTable().addColumn("countTerms", Integer.TYPE);
